@@ -1,125 +1,162 @@
----
-name: layout
-description: Improve layout, spacing, and visual rhythm. Fixes monotonous grids, inconsistent spacing, and weak visual hierarchy. Use when the user mentions layout feeling off, spacing issues, visual hierarchy, crowded UI, alignment problems, or wanting better composition.
-version: 2.1.1
-user-invocable: true
-argument-hint: "[target]"
----
+# Layout Skill
 
-Assess and improve layout and spacing that feels monotonous, crowded, or structurally weak — turning generic arrangements into intentional, rhythmic compositions.
+Analyzes and improves layout decisions including grid systems, alignment, whitespace distribution, and visual hierarchy.
 
-## MANDATORY PREPARATION
+## Purpose
 
-Invoke /impeccable — it contains design principles, anti-patterns, and the **Context Gathering Protocol**. Follow the protocol before proceeding — if no design context exists yet, you MUST run /impeccable teach first.
+Helps ensure layouts are consistent, balanced, and follow established design principles. Works alongside the spacing skill for precise measurements and the typography skill for text-based layout concerns.
 
----
+## Functions
 
-## Assess Current Layout
+### `detectGridSystem(elements)`
 
-Analyze what's weak about the current spatial design:
+Infers the underlying grid system from a set of element positions and widths.
 
-1. **Spacing**:
-   - Is spacing consistent or arbitrary? (Random padding/margin values)
-   - Is all spacing the same? (Equal padding everywhere = no rhythm)
-   - Are related elements grouped tightly, with generous space between groups?
+```javascript
+/**
+ * Attempt to detect the column count and gutter size of an implicit grid
+ * from a list of laid-out elements.
+ *
+ * @param {Array<{x: number, width: number, containerWidth: number}>} elements
+ * @returns {{ columns: number, gutter: number, confidence: number }}
+ */
+function detectGridSystem(elements) {
+  if (!elements.length) return { columns: 12, gutter: 16, confidence: 0 };
 
-2. **Visual hierarchy**:
-   - Apply the squint test: blur your (metaphorical) eyes — can you still identify the most important element, second most important, and clear groupings?
-   - Is hierarchy achieved effectively? (Space and weight alone can be enough — but is the current approach working?)
-   - Does whitespace guide the eye to what matters?
+  const containerWidth = elements[0].containerWidth;
+  const candidateColumns = [4, 6, 8, 12, 16, 24];
+  let best = { columns: 12, gutter: 16, confidence: 0 };
 
-3. **Grid & structure**:
-   - Is there a clear underlying structure, or does the layout feel random?
-   - Are identical card grids used everywhere? (Icon + heading + text, repeated endlessly)
-   - Is everything centered? (Left-aligned with asymmetric layouts feels more designed, but not a hard and fast rule)
+  for (const cols of candidateColumns) {
+    const colWidth = containerWidth / cols;
+    let totalError = 0;
 
-4. **Rhythm & variety**:
-   - Does the layout have visual rhythm? (Alternating tight/generous spacing)
-   - Is every section structured the same way? (Monotonous repetition)
-   - Are there intentional moments of surprise or emphasis?
+    for (const el of elements) {
+      // How many columns does this element span (nearest integer)?
+      const spanRaw = el.width / colWidth;
+      const spanRounded = Math.round(spanRaw);
+      const error = Math.abs(spanRaw - spanRounded) / spanRounded;
+      totalError += error;
+    }
 
-5. **Density**:
-   - Is the layout too cramped? (Not enough breathing room)
-   - Is the layout too sparse? (Excessive whitespace without purpose)
-   - Does density match the content type? (Data-dense UIs need tighter spacing; marketing pages need more air)
+    const avgError = totalError / elements.length;
+    const confidence = Math.max(0, 1 - avgError * 4);
 
-**CRITICAL**: Layout problems are often the root cause of interfaces feeling "off" even when colors and fonts are fine. Space is a design material — use it with intention.
+    if (confidence > best.confidence) {
+      // Estimate gutter from leftover space
+      const totalSpan = elements.reduce((sum, el) => {
+        return sum + Math.round(el.width / colWidth);
+      }, 0);
+      const gutterCount = Math.max(1, totalSpan - 1);
+      const usedWidth = elements.reduce((sum, el) => sum + el.width, 0);
+      const gutter = Math.round((containerWidth - usedWidth) / gutterCount);
 
-## Plan Layout Improvements
+      best = { columns: cols, gutter: Math.max(0, gutter), confidence };
+    }
+  }
 
-Consult the [spatial design reference](reference/spatial-design.md) from the impeccable skill for detailed guidance on grids, rhythm, and container queries.
+  return best;
+}
+```
 
-Create a systematic plan:
+### `checkAlignment(elements)`
 
-- **Spacing system**: Use a consistent scale — whether that's a framework's built-in scale (e.g., Tailwind), rem-based tokens, or a custom system. The specific values matter less than consistency.
-- **Hierarchy strategy**: How will space communicate importance?
-- **Layout approach**: What structure fits the content? Flex for 1D, Grid for 2D, named areas for complex page layouts.
-- **Rhythm**: Where should spacing be tight vs generous?
+Checks whether elements are aligned to a consistent set of axes.
 
-## Improve Layout Systematically
+```javascript
+/**
+ * Identify misaligned elements by looking for near-matches on x/y axes
+ * that fall just outside a tolerance threshold.
+ *
+ * @param {Array<{id: string, x: number, y: number, width: number, height: number}>} elements
+ * @param {number} [tolerance=2] - Pixel tolerance for alignment snapping
+ * @returns {Array<{ id: string, axis: 'x'|'y', offset: number, nearestAxis: number }>}
+ */
+function checkAlignment(elements, tolerance = 2) {
+  const xAxes = [...new Set(elements.map((el) => el.x))];
+  const yAxes = [...new Set(elements.map((el) => el.y))];
+  const misaligned = [];
 
-### Establish a Spacing System
+  for (const el of elements) {
+    const nearestX = xAxes.reduce((prev, curr) =>
+      Math.abs(curr - el.x) < Math.abs(prev - el.x) ? curr : prev
+    );
+    const nearestY = yAxes.reduce((prev, curr) =>
+      Math.abs(curr - el.y) < Math.abs(prev - el.y) ? curr : prev
+    );
 
-- Use a consistent spacing scale — framework scales (Tailwind, etc.), rem-based tokens, or a custom scale all work. What matters is that values come from a defined set, not arbitrary numbers.
-- Name tokens semantically if using custom properties: `--space-xs` through `--space-xl`, not `--spacing-8`
-- Use `gap` for sibling spacing instead of margins — eliminates margin collapse hacks
-- Apply `clamp()` for fluid spacing that breathes on larger screens
+    const xOffset = Math.abs(el.x - nearestX);
+    const yOffset = Math.abs(el.y - nearestY);
 
-### Create Visual Rhythm
+    // Only flag if it's close but not exact — exact matches are intentional
+    if (xOffset > 0 && xOffset <= tolerance * 3 && xOffset > tolerance) {
+      misaligned.push({ id: el.id, axis: 'x', offset: xOffset, nearestAxis: nearestX });
+    }
+    if (yOffset > 0 && yOffset <= tolerance * 3 && yOffset > tolerance) {
+      misaligned.push({ id: el.id, axis: 'y', offset: yOffset, nearestAxis: nearestY });
+    }
+  }
 
-- **Tight grouping** for related elements (8-12px between siblings)
-- **Generous separation** between distinct sections (48-96px)
-- **Varied spacing** within sections — not every row needs the same gap
-- **Asymmetric compositions** — break the predictable centered-content pattern when it makes sense
+  return misaligned;
+}
+```
 
-### Choose the Right Layout Tool
+### `scoreVisualBalance(elements, containerWidth, containerHeight)`
 
-- **Use Flexbox for 1D layouts**: Rows of items, nav bars, button groups, card contents, most component internals. Flex is simpler and more appropriate for the majority of layout tasks.
-- **Use Grid for 2D layouts**: Page-level structure, dashboards, data-dense interfaces, anything where rows AND columns need coordinated control.
-- **Don't default to Grid** when Flexbox with `flex-wrap` would be simpler and more flexible.
-- Use `repeat(auto-fit, minmax(280px, 1fr))` for responsive grids without breakpoints.
-- Use named grid areas (`grid-template-areas`) for complex page layouts — redefine at breakpoints.
+Scores how visually balanced a layout is by comparing the visual weight distribution across quadrants.
 
-### Break Card Grid Monotony
+```javascript
+/**
+ * Compute a balance score (0–1) for a layout by comparing visual weight
+ * across the four quadrants of the container.
+ *
+ * Visual weight is approximated by element area.
+ *
+ * @param {Array<{x: number, y: number, width: number, height: number}>} elements
+ * @param {number} containerWidth
+ * @param {number} containerHeight
+ * @returns {number} Score from 0 (unbalanced) to 1 (perfectly balanced)
+ */
+function scoreVisualBalance(elements, containerWidth, containerHeight) {
+  const cx = containerWidth / 2;
+  const cy = containerHeight / 2;
 
-- Don't default to card grids for everything — spacing and alignment create visual grouping naturally
-- Use cards only when content is truly distinct and actionable — never nest cards inside cards
-- Vary card sizes, span columns, or mix cards with non-card content to break repetition
+  const quadrants = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
 
-### Strengthen Visual Hierarchy
+  for (const el of elements) {
+    const area = el.width * el.height;
+    const elCx = el.x + el.width / 2;
+    const elCy = el.y + el.height / 2;
 
-- Use the fewest dimensions needed for clear hierarchy. Space alone can be enough — generous whitespace around an element draws the eye. Some of the most sophisticated designs achieve rhythm with just space and weight. Add color or size contrast only when simpler means aren't sufficient.
-- Be aware of reading flow — in LTR languages, the eye naturally scans top-left to bottom-right, but primary action placement depends on context (e.g., bottom-right in dialogs, top in navigation).
-- Create clear content groupings through proximity and separation.
+    if (elCx <= cx && elCy <= cy) quadrants.topLeft += area;
+    else if (elCx > cx && elCy <= cy) quadrants.topRight += area;
+    else if (elCx <= cx && elCy > cy) quadrants.bottomLeft += area;
+    else quadrants.bottomRight += area;
+  }
 
-### Manage Depth & Elevation
+  const values = Object.values(quadrants);
+  const total = values.reduce((a, b) => a + b, 0);
+  if (total === 0) return 1;
 
-- Create a semantic z-index scale (dropdown → sticky → modal-backdrop → modal → toast → tooltip)
-- Build a consistent shadow scale (sm → md → lg → xl) — shadows should be subtle
-- Use elevation to reinforce hierarchy, not as decoration
+  const normalized = values.map((v) => v / total);
+  const ideal = 0.25;
+  const maxDeviation = normalized.reduce((sum, v) => sum + Math.abs(v - ideal), 0);
 
-### Optical Adjustments
+  // Maximum possible deviation is 0.75 (all weight in one quadrant)
+  return Math.max(0, 1 - maxDeviation / 0.75);
+}
+```
 
-- If an icon looks visually off-center despite being geometrically centered, nudge it — but only if you're confident it actually looks wrong. Don't adjust speculatively.
+## Usage Guidelines
 
-**NEVER**:
-- Use arbitrary spacing values outside your scale
-- Make all spacing equal — variety creates hierarchy
-- Wrap everything in cards — not everything needs a container
-- Nest cards inside cards — use spacing and dividers for hierarchy within
-- Use identical card grids everywhere (icon + heading + text, repeated)
-- Center everything — left-aligned with asymmetry feels more designed
-- Default to the hero metric layout (big number, small label, stats, gradient) as a template. If showing real user data, a prominent metric can work — but it should display actual data, not decorative numbers.
-- Default to CSS Grid when Flexbox would be simpler — use the simplest tool for the job
-- Use arbitrary z-index values (999, 9999) — build a semantic scale
+- Use `detectGridSystem` to verify that a design is following an established grid before suggesting layout changes.
+- Use `checkAlignment` to surface subtle misalignments that are easy to miss visually but noticeable subconsciously.
+- Use `scoreVisualBalance` as a quick sanity check — scores below 0.6 typically indicate a layout that will feel "heavy" on one side.
+- Combine with the **spacing** skill to ensure gutters and margins are on the spacing scale.
+- Combine with the **contrast** skill when evaluating whether background regions provide sufficient separation between layout sections.
 
-## Verify Layout Improvements
+## Related Skills
 
-- **Squint test**: Can you identify primary, secondary, and groupings with blurred vision?
-- **Rhythm**: Does the page have a satisfying beat of tight and generous spacing?
-- **Hierarchy**: Is the most important content obvious within 2 seconds?
-- **Breathing room**: Does the layout feel comfortable, not cramped or wasteful?
-- **Consistency**: Is the spacing system applied uniformly?
-- **Responsiveness**: Does the layout adapt gracefully across screen sizes?
-
-Remember: Space is the most underused design tool. A layout with the right rhythm and hierarchy can make even simple content feel polished and intentional.
+- `spacing` — for snapping measurements to scale
+- `typography` — for text-driven layout decisions
+- `contrast` — for section separation and layering
